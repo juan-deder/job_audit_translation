@@ -1,10 +1,10 @@
-from datetime import date
-from audit_translation.tests.test_audit_translation import  \
-    AuditTranslationTestCase
 import awswrangler as wr
+import pandas as pd
+from datetime import date
 from audit_translation.config import Config
-from audit_translation.config.constants import DATA_SOURCE, \
-    CATEGORY_EXTRACT_FIELDS, ASSOCIATION_ENTITIES, TRANSLATE_COLS, VALUE_COLS, COLUMN_COLS, TABLE_COLS, PARTITION_COLS, PATH, INPUT_PATH
+from audit_translation.config.constants import CATEGORY_EXTRACT_FIELDS, \
+    ASSOCIATION_ENTITIES, TRANSLATE_COLS, VALUE_COLS, COLUMN_COLS, TABLE_COLS, \
+    PARTITION_COLS, PATH, INPUT_PATH
 
 config = Config()
 
@@ -72,17 +72,30 @@ def translate(mapping, index, default):
     else:
         if (index[:2] in mapping.index and len(mapping.loc[index[:2]]) > 1) \
                 or index[2] == '':
-            #print('Translation does not exist for index: ' + '/'.join(index))
-            pass
+            print('Translation does not exist for index: ' + '/'.join(index))
         return default
 
 
 def extract():
     year, month, day = [str(int(x)) for x in date.today().isoformat().split('-')]
-    return wr.s3.read_parquet(f's3://{getattr(config, INPUT_PATH)}/data/audit/', dataset=True, partition_filter=lambda x: x['year'] == year and x['month'] == month and x['day'] == '30')
+    return wr.s3.read_parquet(
+        f's3://{getattr(config, INPUT_PATH)}/data/audit/', dataset=True,
+        partition_filter=lambda x: x['year'] == year and x['month'] == month and x['day'] == day)
 
 
-def transform(records, mapping=TRANSLATION):
+def extract_mapping():
+    con = wr.redshift.connect('CONFIGURAR UNA AWS GLUE CONNECTION HACIA REDSHIFT Y REEMPLAZAR ESTE STRING CON EL NOMBRE DE LA CONEXIÓN. https://docs.aws.amazon.com/glue/latest/dg/console-connections.html?icmpid=docs_glue_console')
+    with con.cursor() as cursor:
+        cursor.execute(
+            'select column_name_coh as column, table_name_coh as table, '
+            'value_coh as value, translation_coh as translation '
+            'from audit_test.config_homolagacion_coh')
+        mapping = [dict(row) for row in cursor.fetchall()]
+    con.close()
+    return pd.DataFrame(mapping)
+
+
+def transform(records, mapping):
     mapping.set_index(['table', 'column', 'value'], inplace=True)
     return records.apply(apply_func, 1, result_type='expand', mapping=mapping)
 
@@ -94,7 +107,8 @@ def load(df):
 
 def main():
     records = extract()
-    df = transform(records)
+    mapping = extract_mapping()
+    df = transform(records, mapping)
     load(df)
 
 
